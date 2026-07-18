@@ -49,22 +49,17 @@ OS のショートカット処理を通らないため、その処理が「冷�
 
 ---
 
-## ビルド
+## ビルドとインストール
 
 ```bash
-git clone https://github.com/<your-account>/InputSourceSwitcher.git
+git clone https://github.com/rn10/InputSourceSwitcher.git
 cd InputSourceSwitcher
-./build.sh
+./build.sh     # コンパイルして InputSourceSwitcher.app を生成（アドホック署名・アイコン入り）
+./install.sh   # /Applications へコピーし、quarantine 属性を除去する
 ```
 
-`build.sh` はコンパイルして `InputSourceSwitcher.app` を組み立て、
-**アドホック署名**します（`codesign --sign -`）。生成物はカレントに出ます。
-
-アプリケーションフォルダに置くなら：
-
-```bash
-cp -r ./InputSourceSwitcher.app /Applications/
-```
+`build.sh` は `AppIcon.iconset` から `iconutil` でアプリアイコン（`AppIcon.icns`）も
+自動生成するので、追加の手作業は不要です。
 
 ---
 
@@ -72,14 +67,11 @@ cp -r ./InputSourceSwitcher.app /Applications/
 
 キーイベントを横取りするため、**アクセシビリティ権限が必須**です。
 
-1. `InputSourceSwitcher.app` を起動（Finder でダブルクリック）
+1. InputSourceSwitcher を起動（`/Applications` でダブルクリック）
 2. アクセシビリティの許可を求められたら許可
    （出ない場合は「システム設定 > プライバシーとセキュリティ > アクセシビリティ」で
    InputSourceSwitcher を追加してオン）
-3. **いったんアプリを終了し、もう一度起動**
-
-3 の再起動が必要なのは、起動後に付与した権限が、既に動作中のプロセスには
-即時反映されないためです。初回のみの操作で、以降は不要です。
+3. 許可すると 1〜2 秒で自動的に有効になります。**再起動は不要**です。
 
 ---
 
@@ -95,14 +87,16 @@ cp -r ./InputSourceSwitcher.app /Applications/
 - **修飾キー** — 横取り対象の修飾キー（Control / Option / Command / Shift）を選択
 - **ログイン時に起動** — `SMAppService` で自動起動を登録／解除
 - **アクセシビリティ設定を開く…**
+- **アンインストール…** — 下記参照
 - **終了**
 
-選んだ設定は保存され、次回起動時も維持されます。
-なお横取りするキー自体はスペース固定です（変更する場合は `main.swift` 冒頭の
-`switchKeyCode` を編集）。
+UI 言語はシステムの言語設定（日本語／英語）に従います。選んだ設定は保存され、
+次回起動時も維持されます。なお横取りするキー自体はスペース固定です
+（変更する場合は `main.swift` 冒頭の `switchKeyCode` を編集）。
 
-ログイン起動を確実にするには、`/Applications` に置いてから「ログイン時に起動」を
-オンにしてください（`SMAppService` はアプリの配置場所が安定していることを前提とします）。
+ログイン起動を確実にするには、アプリを `/Applications` に置いたままにしてください
+（`SMAppService` は配置場所が安定していることを前提とします。`install.sh` がそこへ
+配置します）。
 
 ---
 
@@ -136,24 +130,25 @@ tail -f ~/Library/Logs/InputSourceSwitcher.log
 
 ---
 
+## 再インストール（更新）について
+
+アプリを入れ直す・更新する場合は、先にメニューの **「アンインストール…」** を
+実行してから、あらためて `./build.sh` と `./install.sh` を実行してください。
+`/Applications` に**上書きコピーはしないでください** — 署名や権限の不整合で
+挙動がおかしくなることがあります。
+
+なお、アンインストールを行うと**保存された設定は消えます**（トグル対象のソース、
+選んだ修飾キーなど）。入れ直したあとは、再設定とアクセシビリティ権限の再付与が
+必要です。
+
+---
+
 ## アンインストール
 
-1. メニューバーの「終了」でアプリを終了（「ログイン時に起動」を使っていた場合は
-   先にオフにしておく）
-2. アプリ本体を削除
-   ```bash
-   rm -rf /Applications/InputSourceSwitcher.app
-   ```
-3. 保存された設定を削除
-   ```bash
-   defaults delete com.naito.InputSourceSwitcher
-   ```
-4. ログを削除
-   ```bash
-   rm -f ~/Library/Logs/InputSourceSwitcher.log
-   ```
-5. 「システム設定 > プライバシーとセキュリティ > アクセシビリティ」から
-   InputSourceSwitcher のエントリを削除
+メニューバーの **「アンインストール…」** を選んで確認すると、ログイン項目の解除、
+設定・ログの削除、アプリ本体のゴミ箱への移動をまとめて行います。続けて
+アクセシビリティ設定が開くので、そこから InputSourceSwitcher の項目を削除して
+ください。この項目だけは自動では削除できないため、手動での削除が必要です。
 
 ---
 

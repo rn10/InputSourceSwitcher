@@ -50,21 +50,17 @@ cannot occur by construction.
 
 ---
 
-## Build
+## Build & Install
 
 ```bash
-git clone https://github.com/<your-account>/InputSourceSwitcher.git
+git clone https://github.com/rn10/InputSourceSwitcher.git
 cd InputSourceSwitcher
-./build.sh
+./build.sh     # compiles and builds InputSourceSwitcher.app (ad-hoc signed, with icon)
+./install.sh   # copies it to /Applications and clears the quarantine flag
 ```
 
-`build.sh` compiles the source, assembles `InputSourceSwitcher.app`, and
-**ad-hoc signs** it (`codesign --sign -`). The result is placed in the current
-directory. To install it:
-
-```bash
-cp -r ./InputSourceSwitcher.app /Applications/
-```
+`build.sh` also generates the app icon (`AppIcon.icns`) from `AppIcon.iconset`
+using `iconutil`, so no extra step is needed.
 
 ---
 
@@ -72,14 +68,12 @@ cp -r ./InputSourceSwitcher.app /Applications/
 
 Because it intercepts keyboard events, **Accessibility permission is required**.
 
-1. Launch `InputSourceSwitcher.app` (double-click in Finder).
+1. Launch InputSourceSwitcher (double-click it in `/Applications`).
 2. Grant Accessibility when prompted. (If no prompt appears, add and enable
    InputSourceSwitcher under *System Settings > Privacy & Security >
    Accessibility*.)
-3. **Quit the app and launch it again.**
-
-Step 3 is needed because a permission granted after launch is not applied to the
-already-running process. This is a one-time step.
+3. It becomes active within a second or two of being granted — **no restart
+   needed**.
 
 ---
 
@@ -87,25 +81,25 @@ already-running process. This is a one-time step.
 
 Click the menu-bar icon:
 
-- **有効 (Enabled)** — turn interception on/off. When off, `^Space` passes
+- **有効 / Enabled** — turn interception on/off. When off, `^Space` passes
   through untouched (handy when registering input-source shortcuts in System
   Settings).
-- **トグルする 2 ソースを選択 (Pick 2 sources to toggle)** — lists your enabled
-  input sources by name. **Select two** and `^Space` will toggle only between
-  those two. "Clear selection" returns to automatic mode (switch to the
-  previously used source).
-- **修飾キー (Modifier keys)** — choose which modifiers (Control / Option /
-  Command / Shift) the shortcut requires.
-- **ログイン時に起動 (Launch at login)** — register/unregister auto-start via
-  `SMAppService`.
-- **アクセシビリティ設定を開く… (Open Accessibility settings…)**
-- **終了 (Quit)**
+- **Pick 2 sources to toggle** — lists your enabled input sources by name.
+  **Select two** and `^Space` toggles only between those two. "Clear selection"
+  returns to automatic mode (switch to the previously used source).
+- **Modifier keys** — choose which modifiers (Control / Option / Command /
+  Shift) the shortcut requires.
+- **Launch at login** — register/unregister auto-start via `SMAppService`.
+- **Open Accessibility settings…**
+- **Uninstall…** — see below.
+- **Quit**
 
-Your settings are saved and restored on the next launch. The intercepted key is
-fixed to Space (edit `switchKeyCode` at the top of `main.swift` to change it).
+The UI language follows your system language (Japanese or English). Settings are
+saved and restored on the next launch. The intercepted key is fixed to Space
+(edit `switchKeyCode` at the top of `main.swift` to change it).
 
-To make login-launch reliable, place the app in `/Applications` before enabling
-"Launch at login" (`SMAppService` expects a stable location).
+To make login-launch reliable, keep the app in `/Applications` (`SMAppService`
+expects a stable location — `install.sh` places it there).
 
 ---
 
@@ -139,24 +133,26 @@ certificate is only valid on your own Mac and is not for distribution.)
 
 ---
 
+## Reinstalling (updating)
+
+To reinstall or update, first run **Uninstall…** from the menu, then run
+`./build.sh` and `./install.sh` again. **Do not just overwrite** the app in
+`/Applications` — doing so can cause odd behavior due to signature/permission
+mismatches.
+
+Note that uninstalling **erases your saved settings** (pinned toggle sources,
+chosen modifier keys, etc.), so you will need to reconfigure and re-grant
+Accessibility after reinstalling.
+
+---
+
 ## Uninstall
 
-1. Quit the app from the menu bar. (If you enabled "Launch at login", turn it
-   off first.)
-2. Remove the app:
-   ```bash
-   rm -rf /Applications/InputSourceSwitcher.app
-   ```
-3. Remove saved settings:
-   ```bash
-   defaults delete com.naito.InputSourceSwitcher
-   ```
-4. Remove the log:
-   ```bash
-   rm -f ~/Library/Logs/InputSourceSwitcher.log
-   ```
-5. Remove the InputSourceSwitcher entry under *System Settings > Privacy &
-   Security > Accessibility*.
+From the menu bar, choose **Uninstall…** and confirm. This removes the login
+item, deletes saved settings and logs, and moves the app to the Trash. It then
+opens the Accessibility settings so you can remove the InputSourceSwitcher
+entry — that one entry cannot be removed automatically and must be deleted by
+you.
 
 ---
 

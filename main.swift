@@ -131,6 +131,7 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     var currentID: String?
     var previousID: String?
+    var permissionTimer: Timer?   // 権限付与を待つ監視タイマー
 
     // ── 起動 ──────────────────────────────────────────
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -151,8 +152,28 @@ final class Controller: NSObject, NSApplicationDelegate {
         applyEnabledState()
         rebuildMenu()
 
-        if !trusted {
-            log("WARNING: accessibility not granted yet. Grant it then relaunch.")
+        // タップ未設置（＝権限未付与）なら、付与を監視して自動でタップを設置する
+        if tap == nil {
+            log("accessibility not granted yet; watching for permission…")
+            startPermissionWatch()
+        }
+    }
+
+    // 権限が付くまで定期的に確認し、付いたらタップを設置してメニューへ即反映する。
+    // 通常起動（既に許可済み）ではタイマーは動かない。
+    func startPermissionWatch() {
+        permissionTimer?.invalidate()
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
+            guard let self = self else { t.invalidate(); return }
+            guard AXIsProcessTrusted() else { return }   // まだ権限なし → 次回へ
+            self.installTap()
+            if self.tap != nil {
+                self.applyEnabledState()
+                self.rebuildMenu()
+                log("permission granted; tap installed without restart")
+                t.invalidate()
+                self.permissionTimer = nil
+            }
         }
     }
 
@@ -264,6 +285,10 @@ final class Controller: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        let uninstallItem = NSMenuItem(title: L("アンインストール…", "Uninstall…"), action: #selector(uninstall), keyEquivalent: "")
+        uninstallItem.target = self
+        menu.addItem(uninstallItem)
+
         let quit = NSMenuItem(title: L("終了", "Quit"), action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -335,6 +360,69 @@ final class Controller: NSObject, NSApplicationDelegate {
     }
     @objc func quit() { NSApp.terminate(nil) }
 
+    // ── アンインストール ──────────────────────────────
+    @objc func uninstall() {
+        // 確認ダイアログ（既定はキャンセル）
+        let confirm = NSAlert()
+        confirm.alertStyle = .warning
+        confirm.messageText = L("InputSourceSwitcher をアンインストールしますか？",
+                                "Uninstall InputSourceSwitcher?")
+        confirm.informativeText = L(
+            "設定・ログを削除し、ログイン項目を解除して、アプリ本体をゴミ箱に移動します。\nアクセシビリティ権限はご自身で削除する必要があります。",
+            "This deletes settings and logs, removes the login item, and moves the app to the Trash.\nYou must remove the Accessibility permission yourself.")
+        confirm.addButton(withTitle: L("キャンセル", "Cancel"))          // 既定
+        confirm.addButton(withTitle: L("アンインストール", "Uninstall"))  // 実行
+        guard confirm.runModal() == .alertSecondButtonReturn else { return }
+
+        // 1. ログイン項目を解除
+        try? SMAppService.mainApp.unregister()
+        log("uninstall: login item unregistered")
+
+        // 2. 保存設定を削除
+        if let bid = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bid)
+            log("uninstall: user defaults removed")
+        }
+
+        // 3. ログファイルを削除
+        try? FileManager.default.removeItem(at: logFileURL)
+
+        // 4. アプリ本体をゴミ箱へ移動
+        var trashed = true
+        do {
+            try FileManager.default.trashItem(at: Bundle.main.bundleURL, resultingItemURL: nil)
+            log("uninstall: app moved to trash")
+        } catch {
+            trashed = false
+            log("uninstall: trash failed: \(error)")
+        }
+
+        // 5. 完了案内（アクセシビリティは手動削除）
+        //    先に設定画面を開き、指示ダイアログは「閉じる」を押すまで残す。
+        //    「アクセシビリティ設定を開く」を押しても閉じず、開き直せる。
+        openAX()
+
+        let done = NSAlert()
+        var msg = L("アンインストールが完了しました。",
+                    "Uninstall complete.")
+        if !trashed {
+            msg += L("\n（アプリ本体のゴミ箱移動に失敗しました。手動で削除してください。）",
+                     "\n(Could not move the app to the Trash; please delete it manually.)")
+        }
+        done.messageText = msg
+        done.informativeText = L(
+            "アクセシビリティ権限は自動では削除できません。開いた「システム設定 > プライバシーとセキュリティ > アクセシビリティ」の一覧から InputSourceSwitcher を削除してください。\n削除できたら「閉じる」を押してください。",
+            "The Accessibility permission cannot be removed automatically. In the System Settings > Privacy & Security > Accessibility list that just opened, remove InputSourceSwitcher.\nClick Close when done.")
+        done.addButton(withTitle: L("閉じる", "Close"))                              // 第1: 閉じる
+        done.addButton(withTitle: L("アクセシビリティ設定を開く", "Open Accessibility settings")) // 第2: 開き直す
+        // 「開く」を押した場合は閉じずに開き直し、「閉じる」を押すまでループ
+        while done.runModal() == .alertSecondButtonReturn {
+            openAX()
+        }
+
+        NSApp.terminate(nil)
+    }
+
     // ── タップの有効/無効 ─────────────────────────────
     func applyEnabledState() {
         guard let tap = tap else { return }
@@ -347,6 +435,7 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     // ── イベントタップ設置 ────────────────────────────
     func installTap() {
+        guard tap == nil else { return }   // 既に設置済みなら何もしない
         let mask = (1 << CGEventType.keyDown.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let t = CGEvent.tapCreate(
