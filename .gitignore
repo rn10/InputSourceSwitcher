@@ -1,0 +1,15 @@
+# 署名用の鍵・証明書（絶対に公開しない）
+*.key
+*.crt
+*.p12
+*.cer
+codesign.cnf
+
+# ビルド生成物
+*.app/
+InputSourceSwitcher
+
+# バックアップ・一時ファイル
+*.bak
+.DS_Store
+build.local.sh
