@@ -13,3 +13,4 @@ InputSourceSwitcher
 *.bak
 .DS_Store
 build.local.sh
+AppIcon.icns
