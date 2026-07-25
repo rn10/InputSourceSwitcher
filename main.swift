@@ -1,6 +1,7 @@
 import Cocoa
 import Carbon.HIToolbox
 import ServiceManagement
+import os
 
 // ═══════════════════════════════════════════════════════
 //  設定の保存キー
@@ -16,6 +17,8 @@ enum Keys {
 let switchKeyCode: CGKeyCode = 49
 // 修飾キーの判定に使う主要マスク
 let majorMask: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
+// 二段撃ちの間隔
+let followupDelayMs: Int = 25
 
 // UI言語: システムの優先言語が日本語なら日本語、それ以外は英語
 let uiLang: String = {
@@ -26,44 +29,25 @@ let uiLang: String = {
 func L(_ ja: String, _ en: String) -> String {
     return uiLang == "ja" ? ja : en
 }
-// 二段撃ちの間隔
-let followupDelayMs: UInt32 = 25
 
-// ログの出力先ファイル（~/Library/Logs/InputSourceSwitcher.log）
-let logFileURL: URL = {
-    let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Logs")
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir.appendingPathComponent("InputSourceSwitcher.log")
-}()
-// これを超えたら古い方を捨てる上限（約256KB）
-let logMaxBytes = 256 * 1024
-
-func appendToLogFile(_ line: String) {
-    let data = Data(line.utf8)
-    let fm = FileManager.default
-    if let h = try? FileHandle(forWritingTo: logFileURL) {
-        defer { try? h.close() }
-        h.seekToEndOfFile()
-        h.write(data)
-    } else {
-        try? data.write(to: logFileURL)   // 初回作成
-    }
-    // サイズ超過なら後半だけ残して切り詰め
-    if let size = (try? fm.attributesOfItem(atPath: logFileURL.path)[.size]) as? Int,
-       size > logMaxBytes,
-       let all = try? Data(contentsOf: logFileURL) {
-        let tail = all.suffix(logMaxBytes / 2)
-        try? tail.write(to: logFileURL)
-    }
-}
-
-func log(_ s: String) {
-    let ts = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(ts)] \(s)\n"
-    print(line, terminator: ""); fflush(stdout)
-    appendToLogFile(line)
-}
+// ═══════════════════════════════════════════════════════
+//  ログ（OS標準の統合ログ）
+// ═══════════════════════════════════════════════════════
+// 独自ファイルには書かない。理由は2つ:
+//  1. イベントタップのコールバック内でファイルI/Oを行うと処理が遅れ、
+//     OSにタップを無効化される（tapDisabledByTimeout）原因になる。
+//  2. os.Logger は収集対象でないレベルの文字列組み立て自体をスキップするため、
+//     通常運用のコストがほぼゼロになる。
+//
+// 確認方法:
+//   log show --predicate 'subsystem == "com.naito.InputSourceSwitcher"' \
+//            --last 1h --info --debug
+//   log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher"' --level debug
+// GUI なら「コンソール.app」で subsystem:com.naito.InputSourceSwitcher を検索。
+//
+// 注意: os.Logger は変数を既定で伏せ字にするため、値は privacy: .public を明示する。
+let subsystemID = Bundle.main.bundleIdentifier ?? "com.naito.InputSourceSwitcher"
+let logger = Logger(subsystem: subsystemID, category: "main")
 
 // ═══════════════════════════════════════════════════════
 //  TIS ヘルパー
@@ -131,15 +115,27 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     var currentID: String?
     var previousID: String?
-    var permissionTimer: Timer?   // 権限付与を待つ監視タイマー
+
+    // keyDown を飲み込んだら、対応する keyUp も飲み込むためのフラグ。
+    // keyUp を素通しすると、キー状態を自前で追跡するアプリが
+    // 「押しっぱなし」と誤認することがある。
+    var swallowedKeyDown = false
+
+    var permissionTimer: Timer?        // 権限付与を待つ監視タイマー
+    var permissionElapsed = 0
+    var permissionHintShown = false
 
     // ── 起動 ──────────────────────────────────────────
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 多重起動を防ぐ。2つ動くと両方が切替を実行して往復し、
+        // 見た目上「切り替わらない」状態になる。
+        if terminateIfAlreadyRunning() { return }
+
         loadSettings()
 
         let axOpts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(axOpts)
-        log("accessibility trusted = \(trusted)")
+        logger.notice("launched; accessibility trusted = \(trusted, privacy: .public)")
 
         currentID = currentSourceID()
 
@@ -154,27 +150,81 @@ final class Controller: NSObject, NSApplicationDelegate {
 
         // タップ未設置（＝権限未付与）なら、付与を監視して自動でタップを設置する
         if tap == nil {
-            log("accessibility not granted yet; watching for permission…")
+            logger.notice("accessibility not granted yet; watching for permission")
             startPermissionWatch()
         }
+    }
+
+    // 同じバンドルIDの別プロセスが動いていれば、こちらを終了する
+    func terminateIfAlreadyRunning() -> Bool {
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication
+            .runningApplications(withBundleIdentifier: subsystemID)
+            .filter { $0.processIdentifier != myPID }
+        guard !others.isEmpty else { return false }
+
+        logger.error("another instance is already running; terminating this one")
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = L("InputSourceSwitcher はすでに起動しています。",
+                          "InputSourceSwitcher is already running.")
+        a.informativeText = L("メニューバーのアイコンから操作してください。",
+                              "Use the existing menu-bar icon.")
+        a.runModal()
+        NSApp.terminate(nil)
+        return true
     }
 
     // 権限が付くまで定期的に確認し、付いたらタップを設置してメニューへ即反映する。
     // 通常起動（既に許可済み）ではタイマーは動かない。
     func startPermissionWatch() {
         permissionTimer?.invalidate()
+        permissionElapsed = 0
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] t in
             guard let self = self else { t.invalidate(); return }
-            guard AXIsProcessTrusted() else { return }   // まだ権限なし → 次回へ
+            self.permissionElapsed += 1
+
+            guard AXIsProcessTrusted() else {
+                // 一覧に古いエントリが残っていると、チェックが入っていても
+                // 権限は付かない。しばらく待っても付かない場合に案内する。
+                if self.permissionElapsed >= 30 && !self.permissionHintShown {
+                    self.permissionHintShown = true
+                    self.showStalePermissionHint()
+                }
+                return
+            }
             self.installTap()
             if self.tap != nil {
                 self.applyEnabledState()
                 self.rebuildMenu()
-                log("permission granted; tap installed without restart")
+                logger.notice("permission granted; tap installed without restart")
                 t.invalidate()
                 self.permissionTimer = nil
             }
         }
+    }
+
+    // アドホック署名のため、更新後は一覧に残ったエントリが無効になっている。
+    // チェックの付け直しでは直らず、削除→再追加が必要。
+    func showStalePermissionHint() {
+        logger.error("accessibility still not granted after 30s; showing stale-entry hint")
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.alertStyle = .informational
+        a.messageText = L("アクセシビリティの許可がまだ有効になっていません。",
+                          "Accessibility permission is still not active.")
+        a.informativeText = L(
+            "一覧に InputSourceSwitcher が表示され、チェックが入っていても動かない場合は、"
+            + "古い登録が残っています。\n\n"
+            + "「−」ボタンで一覧から削除してから、あらためて追加してください。\n"
+            + "チェックを外して入れ直すだけでは直りません。",
+            "If InputSourceSwitcher already appears in the list with its checkbox on but "
+            + "still does not work, a stale entry is left over.\n\n"
+            + "Remove it from the list with the “−” button, then add it again.\n"
+            + "Unchecking and re-checking the box will not fix it.")
+        a.addButton(withTitle: L("アクセシビリティ設定を開く", "Open Accessibility settings"))
+        a.addButton(withTitle: L("閉じる", "Close"))
+        if a.runModal() == .alertFirstButtonReturn { openAX() }
     }
 
     // ── 設定の読み書き ────────────────────────────────
@@ -183,10 +233,12 @@ final class Controller: NSObject, NSApplicationDelegate {
             enabled = defaults.bool(forKey: Keys.enabled)
         }
         if let n = defaults.object(forKey: Keys.requiredFlags) as? NSNumber {
-            requiredFlags = CGEventFlags(rawValue: n.uint64Value)
+            let restored = CGEventFlags(rawValue: n.uint64Value).intersection(majorMask)
+            // 修飾キーが空だと素のスペースに一致してしまうため、念のため補正する
+            requiredFlags = restored.isEmpty ? [.maskControl] : restored
         }
         if let n = defaults.object(forKey: Keys.followupCount) as? NSNumber {
-            followupCount = n.intValue
+            followupCount = max(0, n.intValue)
         }
         if let arr = defaults.stringArray(forKey: Keys.toggleSources) {
             toggleSources = arr
@@ -283,6 +335,10 @@ final class Controller: NSObject, NSApplicationDelegate {
         axItem.target = self
         menu.addItem(axItem)
 
+        let logItem = NSMenuItem(title: L("ログを書き出す…", "Export log…"), action: #selector(exportLog), keyEquivalent: "")
+        logItem.target = self
+        menu.addItem(logItem)
+
         menu.addItem(.separator())
 
         let uninstallItem = NSMenuItem(title: L("アンインストール…", "Uninstall…"), action: #selector(uninstall), keyEquivalent: "")
@@ -302,7 +358,7 @@ final class Controller: NSObject, NSApplicationDelegate {
         if requiredFlags.contains(.maskAlternate) { parts.append("⌥") }
         if requiredFlags.contains(.maskShift) { parts.append("⇧") }
         if requiredFlags.contains(.maskCommand) { parts.append("⌘") }
-        return parts.isEmpty ? L("(修飾なし)", "(none)") : parts.joined()
+        return parts.isEmpty ? "?" : parts.joined()
     }
 
     // ── メニュー アクション ───────────────────────────
@@ -312,14 +368,30 @@ final class Controller: NSObject, NSApplicationDelegate {
         saveSettings()
         rebuildMenu()
     }
+
     @objc func toggleModifier(_ sender: NSMenuItem) {
         guard let n = sender.representedObject as? NSNumber else { return }
         let flag = CGEventFlags(rawValue: n.uint64Value)
-        if requiredFlags.contains(flag) { requiredFlags.remove(flag) }
-        else { requiredFlags.insert(flag) }
+        if requiredFlags.contains(flag) {
+            var next = requiredFlags
+            next.remove(flag)
+            // 修飾キーを全部外すと、素のスペースキーが条件に一致して
+            // 全アプリでスペースが飲み込まれ、文字入力ができなくなる。
+            // 最後の1つは外させない。
+            if next.isEmpty {
+                NSSound.beep()
+                logger.notice("refused to clear the last modifier key")
+                return
+            }
+            requiredFlags = next
+        } else {
+            requiredFlags.insert(flag)
+        }
+        logger.notice("modifiers = \(self.comboDescription(), privacy: .public)")
         saveSettings()
         rebuildMenu()
     }
+
     // トグル対象ソースの選択。最大2つ、古いものから押し出す(FIFO)。
     @objc func toggleSourceSelection(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
@@ -334,31 +406,85 @@ final class Controller: NSObject, NSApplicationDelegate {
         saveSettings()
         rebuildMenu()
     }
+
     @objc func clearToggleSources() {
         toggleSources.removeAll()
         saveSettings()
         rebuildMenu()
     }
+
     @objc func toggleLogin() {
         do {
             if SMAppService.mainApp.status == .enabled {
                 try SMAppService.mainApp.unregister()
-                log("login item unregistered")
+                logger.notice("login item unregistered")
             } else {
                 try SMAppService.mainApp.register()
-                log("login item registered")
+                logger.notice("login item registered")
             }
         } catch {
-            log("login item toggle failed: \(error)")
+            logger.error("login item toggle failed: \(error.localizedDescription, privacy: .public)")
         }
         rebuildMenu()
     }
+
     @objc func openAX() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
     }
+
     @objc func quit() { NSApp.terminate(nil) }
+
+    // ── ログの書き出し ────────────────────────────────
+    // ターミナルを使わない相手からも不具合報告を受け取れるように、
+    // `log show` の結果をデスクトップにテキストで保存する。
+    @objc func exportLog() {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd-HHmmss"
+        let dest = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("InputSourceSwitcher-log-\(fmt.string(from: Date())).txt")
+
+        // log show は数秒かかることがあるので、メインスレッドを止めない
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+            p.arguments = ["show",
+                           "--predicate", "subsystem == \"\(subsystemID)\"",
+                           "--last", "1h",
+                           "--info", "--debug",
+                           "--style", "compact"]
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = Pipe()
+
+            var failure: String?
+            do {
+                try p.run()
+                // waitUntilExit より先に読み切らないとパイプが詰まる
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                try data.write(to: dest)
+            } catch {
+                failure = error.localizedDescription
+            }
+
+            DispatchQueue.main.async {
+                if let failure = failure {
+                    logger.error("log export failed: \(failure, privacy: .public)")
+                    NSApp.activate(ignoringOtherApps: true)
+                    let a = NSAlert()
+                    a.alertStyle = .warning
+                    a.messageText = L("ログの書き出しに失敗しました。", "Could not export the log.")
+                    a.informativeText = failure
+                    a.runModal()
+                } else {
+                    logger.notice("log exported")
+                    NSWorkspace.shared.activateFileViewerSelecting([dest])
+                }
+            }
+        }
+    }
 
     // ── アンインストール ──────────────────────────────
     @objc func uninstall() {
@@ -368,36 +494,34 @@ final class Controller: NSObject, NSApplicationDelegate {
         confirm.messageText = L("InputSourceSwitcher をアンインストールしますか？",
                                 "Uninstall InputSourceSwitcher?")
         confirm.informativeText = L(
-            "設定・ログを削除し、ログイン項目を解除して、アプリ本体をゴミ箱に移動します。\nアクセシビリティ権限はご自身で削除する必要があります。",
-            "This deletes settings and logs, removes the login item, and moves the app to the Trash.\nYou must remove the Accessibility permission yourself.")
+            "設定を削除し、ログイン項目を解除して、アプリ本体をゴミ箱に移動します。\nアクセシビリティ権限はご自身で削除する必要があります。",
+            "This deletes your settings, removes the login item, and moves the app to the Trash.\nYou must remove the Accessibility permission yourself.")
         confirm.addButton(withTitle: L("キャンセル", "Cancel"))          // 既定
         confirm.addButton(withTitle: L("アンインストール", "Uninstall"))  // 実行
         guard confirm.runModal() == .alertSecondButtonReturn else { return }
 
         // 1. ログイン項目を解除
         try? SMAppService.mainApp.unregister()
-        log("uninstall: login item unregistered")
+        logger.notice("uninstall: login item unregistered")
 
         // 2. 保存設定を削除
         if let bid = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bid)
-            log("uninstall: user defaults removed")
+            logger.notice("uninstall: user defaults removed")
         }
 
-        // 3. ログファイルを削除
-        try? FileManager.default.removeItem(at: logFileURL)
-
-        // 4. アプリ本体をゴミ箱へ移動
+        // 3. アプリ本体をゴミ箱へ移動
+        //    （ログはOSの統合ログに残るが、一定期間で自動的に消える）
         var trashed = true
         do {
             try FileManager.default.trashItem(at: Bundle.main.bundleURL, resultingItemURL: nil)
-            log("uninstall: app moved to trash")
+            logger.notice("uninstall: app moved to trash")
         } catch {
             trashed = false
-            log("uninstall: trash failed: \(error)")
+            logger.error("uninstall: trash failed: \(error.localizedDescription, privacy: .public)")
         }
 
-        // 5. 完了案内（アクセシビリティは手動削除）
+        // 4. 完了案内（アクセシビリティは手動削除）
         //    先に設定画面を開き、指示ダイアログは「閉じる」を押すまで残す。
         //    「アクセシビリティ設定を開く」を押しても閉じず、開き直せる。
         openAX()
@@ -430,42 +554,61 @@ final class Controller: NSObject, NSApplicationDelegate {
         if let btn = statusItem.button {
             btn.contentTintColor = enabled ? nil : .disabledControlTextColor
         }
-        log("enabled = \(enabled)")
+        logger.notice("enabled = \(self.enabled, privacy: .public)")
     }
 
     // ── イベントタップ設置 ────────────────────────────
     func installTap() {
         guard tap == nil else { return }   // 既に設置済みなら何もしない
-        let mask = (1 << CGEventType.keyDown.rawValue)
+        // keyDown だけでなく keyUp も対象にする（対になる keyUp を素通しさせないため）
+        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         guard let t = CGEvent.tapCreate(
             tap: .cgSessionEventTap, place: .headInsertEventTap,
             options: .defaultTap, eventsOfInterest: CGEventMask(mask),
             callback: tapCallback, userInfo: refcon) else {
-            log("ERROR: failed to create event tap (accessibility not granted?)")
+            logger.error("failed to create event tap (accessibility not granted?)")
             return
         }
         tap = t
         let rls = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, t, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), rls, .commonModes)
-        log("event tap installed")
+        logger.notice("event tap installed")
     }
 
     // ── コールバック実処理 ────────────────────────────
+    // ここは「即座に返す」ことが最優先。時間のかかる処理を行うと
+    // OS にタップを無効化される（tapDisabledByTimeout）。
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // 「ある日突然効かなくなった」を追う唯一の手がかりなので、
+            // 常時記録される .error で残す
+            logger.error("event tap disabled (\(type.rawValue, privacy: .public)); re-enabling")
             if let t = tap, enabled { CGEvent.tapEnable(tap: t, enable: true) }
             return Unmanaged.passUnretained(event)
         }
+
+        let keycode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+
         if type == .keyDown {
-            let keycode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
             let mods = event.flags.intersection(majorMask)
             if keycode == switchKeyCode && mods == requiredFlags {
                 let repeated = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                if !repeated { performSwitch() }
+                if !repeated {
+                    // 切替本体はコールバックの外へ逃がす
+                    DispatchQueue.main.async { [weak self] in self?.performSwitch() }
+                }
+                swallowedKeyDown = true
                 return nil // 飲み込む
             }
+        } else if type == .keyUp {
+            // 修飾キーを先に離した場合でも対になる keyUp を確実に飲み込む
+            if keycode == switchKeyCode && swallowedKeyDown {
+                swallowedKeyDown = false
+                return nil
+            }
         }
+
         return Unmanaged.passUnretained(event)
     }
 
@@ -490,14 +633,21 @@ final class Controller: NSObject, NSApplicationDelegate {
         }
 
         guard let tID = targetID, let target = source(forID: tID) else { return }
-        let s = TISSelectInputSource(target)
-        for _ in 0..<followupCount {
-            usleep(followupDelayMs * 1000)
-            _ = TISSelectInputSource(target)
-        }
-        log("switch \(curr) -> \(tID) (OSStatus \(s))")
+
+        let status = TISSelectInputSource(target)
+        logger.debug("switch \(curr, privacy: .public) -> \(tID, privacy: .public) (OSStatus \(status, privacy: .public))")
         previousID = curr
         currentID = tID
+
+        // 二段撃ち。usleep で止めず、後追いで選び直す。
+        if followupCount > 0 {
+            for i in 1...followupCount {
+                let delay = Double(followupDelayMs * i) / 1000.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    _ = TISSelectInputSource(target)
+                }
+            }
+        }
     }
 
     func onSelectionChanged() {
