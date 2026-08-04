@@ -229,6 +229,7 @@ is public, so you can verify its behavior directly in the code.
 - Extended the follow-up re-selection timings to better catch delayed IME
   activation when switching after a long idle period.
 - Documented the brief menu-bar indicator flicker as expected behavior.
+- Added a version display and a "View on GitHub" link to the menu.
 
 **1.1**
 

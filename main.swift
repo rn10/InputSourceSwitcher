@@ -335,6 +335,15 @@ final class Controller: NSObject, NSApplicationDelegate {
         axItem.target = self
         menu.addItem(axItem)
 
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let verItem = NSMenuItem(title: L("バージョン", "Version") + " \(version)", action: nil, keyEquivalent: "")
+        verItem.isEnabled = false
+        menu.addItem(verItem)
+
+        let ghItem = NSMenuItem(title: L("GitHub で開く", "View on GitHub"), action: #selector(openGitHub), keyEquivalent: "")
+        ghItem.target = self
+        menu.addItem(ghItem)
+
         let logItem = NSMenuItem(title: L("ログを書き出す…", "Export log…"), action: #selector(exportLog), keyEquivalent: "")
         logItem.target = self
         menu.addItem(logItem)
@@ -430,6 +439,12 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     @objc func openAX() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc func openGitHub() {
+        if let url = URL(string: "https://github.com/rn10/InputSourceSwitcher") {
             NSWorkspace.shared.open(url)
         }
     }
