@@ -47,6 +47,14 @@ switches back.
 
 ---
 
+## Known behavior
+
+When switching, the input-source indicator in the menu bar may flicker briefly.
+This is because the source is selected several times in quick succession to make
+the switch reliable (the switch plus follow-up re-selections). It is harmless.
+
+---
+
 ## Requirements
 
 - macOS 13 (Ventura) or later (login-item support uses `SMAppService`)
@@ -215,6 +223,12 @@ is public, so you can verify its behavior directly in the code.
 ---
 
 ## Changelog
+
+**1.2**
+
+- Extended the follow-up re-selection timings to better catch delayed IME
+  activation when switching after a long idle period.
+- Documented the brief menu-bar indicator flicker as expected behavior.
 
 **1.1**
 

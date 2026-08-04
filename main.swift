@@ -18,7 +18,7 @@ let switchKeyCode: CGKeyCode = 49
 // 修飾キーの判定に使う主要マスク
 let majorMask: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
 // 二段撃ちの間隔
-let followupDelayMs: Int = 25
+let followupDelayMs: Int = 60
 
 // UI言語: システムの優先言語が日本語なら日本語、それ以外は英語
 let uiLang: String = {
@@ -110,7 +110,7 @@ final class Controller: NSObject, NSApplicationDelegate {
 
     var enabled = true
     var requiredFlags: CGEventFlags = [.maskControl]
-    var followupCount = 1
+    var followupCount = 2
     var toggleSources: [String] = []   // 0個=自動モード / 2個=決め打ちトグル
 
     var currentID: String?
@@ -639,13 +639,13 @@ final class Controller: NSObject, NSApplicationDelegate {
         previousID = curr
         currentID = tID
 
-        // 二段撃ち。usleep で止めず、後追いで選び直す。
-        if followupCount > 0 {
-            for i in 1...followupCount {
-                let delay = Double(followupDelayMs * i) / 1000.0
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    _ = TISSelectInputSource(target)
-                }
+        // 反映が遅れることがあるため、複数タイミングで無条件に選び直す（ログ付き）。
+        // フォーカス中フィールドへの反映が数百ms遅れるケースを拾うため後ろまで撃つ。
+        let followupDelaysMs = [120, 400, 800]
+        for ms in followupDelaysMs {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(ms) / 1000.0) {
+                _ = TISSelectInputSource(target)
+                logger.debug("followup re-select @\(ms, privacy: .public)ms -> \(tID, privacy: .public)")
             }
         }
     }
