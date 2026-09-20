@@ -8,7 +8,7 @@
     <key>CFBundleDisplayName</key>
     <string>InputSourceSwitcher</string>
     <key>CFBundleIdentifier</key>
-    <string>com.naito.InputSourceSwitcher</string>
+    <string>com.naito.InputSourceSwitcher2</string>
     <key>CFBundleExecutable</key>
     <string>InputSourceSwitcher</string>
     <key>CFBundleIconFile</key>

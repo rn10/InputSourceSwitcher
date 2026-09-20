@@ -139,17 +139,17 @@ rotate or clean up.
 View the last hour:
 
 ```bash
-log show --predicate 'subsystem == "com.naito.InputSourceSwitcher"' \
+log show --predicate 'subsystem == "com.naito.InputSourceSwitcher2"' \
          --last 1h --info --debug
 ```
 
 Follow live:
 
 ```bash
-log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher"' --level debug
+log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher2"' --level debug
 ```
 
-In Console.app, search for `subsystem:com.naito.InputSourceSwitcher`, and enable
+In Console.app, search for `subsystem:com.naito.InputSourceSwitcher2`, and enable
 *Action > Include Debug Messages* to see individual switches.
 
 Or just use **Export log…** from the menu.
@@ -184,7 +184,7 @@ as a different app. The old grant stops working — but the entry stays in the
 list *with its checkbox still on*, which makes it look like the permission is
 fine. Unchecking and re-checking does not fix it.
 
-`install.sh` therefore runs `tccutil reset Accessibility com.naito.InputSourceSwitcher`
+`install.sh` therefore runs `tccutil reset Accessibility com.naito.InputSourceSwitcher2`
 so the app asks for permission cleanly on the next launch. If that command fails
 (it can, depending on the macOS version), do it by hand:
 

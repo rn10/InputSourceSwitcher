@@ -135,17 +135,17 @@ UI 言語はシステムの言語設定（日本語／英語）に従います�
 直近 1 時間を表示：
 
 ```bash
-log show --predicate 'subsystem == "com.naito.InputSourceSwitcher"' \
+log show --predicate 'subsystem == "com.naito.InputSourceSwitcher2"' \
          --last 1h --info --debug
 ```
 
 リアルタイムで追う：
 
 ```bash
-log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher"' --level debug
+log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher2"' --level debug
 ```
 
-「コンソール.app」なら検索欄に `subsystem:com.naito.InputSourceSwitcher` と入力し、
+「コンソール.app」なら検索欄に `subsystem:com.naito.InputSourceSwitcher2` と入力し、
 メニューの「アクション > デバッグメッセージを含める」をオンにすると個々の切り替えも
 表示されます。
 
@@ -182,7 +182,7 @@ log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher"' --level de
 チェックを外して入れ直しても直りません。
 
 そこで `install.sh` は
-`tccutil reset Accessibility com.naito.InputSourceSwitcher` を実行し、
+`tccutil reset Accessibility com.naito.InputSourceSwitcher2` を実行し、
 次回起動時にあらためて許可を求めるようにしています。macOS のバージョンによっては
 このコマンドが失敗することもあるので、その場合は手動で行ってください。
 

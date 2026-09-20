@@ -40,13 +40,13 @@ func L(_ ja: String, _ en: String) -> String {
 //     通常運用のコストがほぼゼロになる。
 //
 // 確認方法:
-//   log show --predicate 'subsystem == "com.naito.InputSourceSwitcher"' \
+//   log show --predicate 'subsystem == "com.naito.InputSourceSwitcher2"' \
 //            --last 1h --info --debug
-//   log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher"' --level debug
-// GUI なら「コンソール.app」で subsystem:com.naito.InputSourceSwitcher を検索。
+//   log stream --predicate 'subsystem == "com.naito.InputSourceSwitcher2"' --level debug
+// GUI なら「コンソール.app」で subsystem:com.naito.InputSourceSwitcher2 を検索。
 //
 // 注意: os.Logger は変数を既定で伏せ字にするため、値は privacy: .public を明示する。
-let subsystemID = Bundle.main.bundleIdentifier ?? "com.naito.InputSourceSwitcher"
+let subsystemID = Bundle.main.bundleIdentifier ?? "com.naito.InputSourceSwitcher2"
 let logger = Logger(subsystem: subsystemID, category: "main")
 
 // ═══════════════════════════════════════════════════════
@@ -656,7 +656,7 @@ final class Controller: NSObject, NSApplicationDelegate {
 
         // 反映が遅れることがあるため、複数タイミングで無条件に選び直す（ログ付き）。
         // フォーカス中フィールドへの反映が数百ms遅れるケースを拾うため後ろまで撃つ。
-        let followupDelaysMs = [120, 400, 800]
+        let followupDelaysMs = [40, 120, 250]
         for ms in followupDelaysMs {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(ms) / 1000.0) {
                 _ = TISSelectInputSource(target)
