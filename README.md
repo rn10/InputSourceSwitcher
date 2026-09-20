@@ -198,6 +198,43 @@ Mac and is not needed for normal use.
 
 ---
 
+## Troubleshooting: switching stops working entirely
+
+Rarely — most often after rebuilding many times — `^Space` stops reaching the
+app completely: nothing switches, the log shows no `switch` lines, and the app
+still reports Accessibility as granted. This is a corrupted TCC (permission)
+record stuck to the bundle identifier, not a bug in the switch logic.
+
+First, confirm the Mac's event tap machinery itself is healthy with the bundled
+`taptest.swift` (it uses the same `CGEventTap`, with no app bundle or signature
+involved):
+
+```bash
+swiftc taptest.swift -o taptest -framework Cocoa
+./taptest
+```
+
+Grant Accessibility to **Terminal itself** when asked (System Settings > Privacy
+& Security > Accessibility), quit and reopen Terminal, then run `./taptest`
+again and press some keys.
+
+- **Keycodes are printed** → the event tap works; the problem is the app's stale
+  TCC record. Recover by giving the app a fresh identity: change
+  `CFBundleIdentifier` in `Info.plist` to a new value (e.g. append a digit),
+  then `./build.sh && ./install.sh` and grant Accessibility once more. This is
+  exactly how `...Switcher2` came to be.
+- **Nothing is printed, or tap creation fails even with Terminal granted** → the
+  problem is system-wide, not this app. A full `tccutil reset Accessibility`
+  (all apps) or a restart is the next step.
+
+Why it happens: ad-hoc signing changes the signature on every build, so macOS
+keeps seeing "same identifier, different binary." Over many rebuilds the TCC
+record for that identifier can end up inconsistent — reported as granted while no
+events are actually delivered. A stable (self-signed) certificate avoids it; see
+*Updating*.
+
+---
+
 ## Uninstall
 
 From the menu bar, choose **Uninstall…** and confirm. This removes the login
@@ -223,6 +260,13 @@ is public, so you can verify its behavior directly in the code.
 ---
 
 ## Changelog
+
+**1.2.1**
+
+- Recovered from a corrupted TCC record by moving to bundle ID
+  `com.naito.InputSourceSwitcher2`; aligned docs and the log subsystem.
+- Added `taptest.swift` and a Troubleshooting section for diagnosing the case
+  where key events stop reaching the app.
 
 **1.2**
 
